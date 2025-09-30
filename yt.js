@@ -172,93 +172,111 @@ const channelIDs = [
 ];
 
 async function getChannelInfo(channelID) {
-    try {
-        const response = await axios.get(`https://mixerno.space/api/youtube-channel-counter/user/${channelID}`);
-        const data = response.data;
+  try {
+    const response = await axios.get(
+      `https://mixerno.space/api/youtube-channel-counter/user/${channelID}`
+    );
+    const data = response.data;
 
-        return {
-            name: data.user.find(item => item.value === "name")?.count || "Unknown",
-            subscribers: data.counts.find(item => item.value === "subscribers")?.count || 0,
-            pfp: data.user.find(item => item.value === "pfp")?.count || "",
-            goal: data.counts.find(item => item.value === "goal")?.count || null
-        };
-    } catch (error) {
-        console.error(`❌ Error fetching ${channelID}: ${error.message}`);
-        return { name: "Sharkbright", subscribers: 12345678, goal: 1, pfp: "" };
-    }
+    return {
+      name: data.user.find(item => item.value === "name")?.count || "Unknown",
+      subscribers: data.counts.find(item => item.value === "subscribers")?.count || 0,
+      pfp: data.user.find(item => item.value === "pfp")?.count || "",
+      goal: data.counts.find(item => item.value === "goal")?.count || null
+    };
+  } catch (error) {
+    console.error(`❌ Error fetching ${channelID}: ${error.message}`);
+    return { name: "Sharkbright", subscribers: 12345678, goal: 1, pfp: "" };
+  }
 }
 
 async function updateJSON(lastUpdateTime, previousData) {
-    let tracked = 0;
-    let trackedchannels24hr = 0;
-    let totalSubscribers = 0;
+  let tracked = 0;
+  let trackedchannels24hr = 0;
+  let totalSubscribers = 0;
 
-    let statsData = { tracked: 0, trackedchannels24hr: 0, totalSubscribers: 0 };
-    try {
-        statsData = JSON.parse(fs.readFileSync("stats.json"));
-    } catch {}
+  let statsData = { tracked: 0, trackedchannels24hr: 0, totalSubscribers: 0 };
+  try {
+    statsData = JSON.parse(fs.readFileSync("stats.json"));
+  } catch {}
 
-    // 🚀 Fetch all channels in parallel
-    const channelInfos = await Promise.all(channelIDs.map(id => getChannelInfo(id)));
-    const currentTime = Date.now();
+  const channelInfos = await Promise.all(channelIDs.map(id => getChannelInfo(id)));
+  const currentTime = Date.now();
 
-    const results = channelInfos.map((channelInfo, i) => {
-        const id = channelIDs[i];
-        tracked++;
+  const results = channelInfos.map((channelInfo, i) => {
+    const id = channelIDs[i];
+    tracked++;
 
-        const previousSubscribers = previousData[id]?.subscribers || 0;
-        const subsGained24hrs = channelInfo.subscribers - previousSubscribers;
+    const previousSubscribers = previousData[id]?.subscribers || 0;
+    const subsGained24hrs = channelInfo.subscribers - previousSubscribers;
 
-        if (subsGained24hrs !== 0) trackedchannels24hr++;
-        totalSubscribers += channelInfo.subscribers;
+    if (subsGained24hrs !== 0) trackedchannels24hr++;
+    totalSubscribers += channelInfo.subscribers;
 
-        const subsout = subsGained24hrs * 100;
+    const subsout = subsGained24hrs * 100;
 
-        return {
-            channel_id: id,
-            name: channelInfo.name,
-            subscribers: channelInfo.subscribers,
-            goal: channelInfo.goal,
-            pfp: channelInfo.pfp,
-            verified: true,
-            subs_gained_24hrs: subsout,
-            last_update: new Date(currentTime).toISOString()
-        };
-    });
+    return {
+      channel_id: id,
+      name: channelInfo.name,
+      subscribers: channelInfo.subscribers,
+      goal: channelInfo.goal,
+      pfp: channelInfo.pfp,
+      verified: true,
+      subs_gained_24hrs: subsout,
+      last_update: new Date(currentTime).toISOString()
+    };
+  });
 
-    results.sort((a, b) => b.subscribers - a.subscribers);
-    results.forEach((item, index) => { item.rank = index + 1; });
+  results.sort((a, b) => b.subscribers - a.subscribers);
+  results.forEach((item, index) => { item.rank = index + 1; });
 
-    // Save top channels (reduce disk writes)
-    fs.writeFileSync("top50.json", JSON.stringify(results.slice(0, 167), null, 2));
+  fs.writeFileSync("top50.json", JSON.stringify(results.slice(0, 167), null, 2));
 
-    statsData.tracked = tracked;
-    statsData.trackedchannels24hr += trackedchannels24hr + 79876;
-    statsData.totalSubscribers = totalSubscribers;
-    fs.writeFileSync("stats.json", JSON.stringify(statsData, null, 2));
+  statsData.tracked = tracked;
+  statsData.trackedchannels24hr += trackedchannels24hr + 79876;
+  statsData.totalSubscribers = totalSubscribers;
+  fs.writeFileSync("stats.json", JSON.stringify(statsData, null, 2));
 
-    console.log(`✅ Updated: Tracked ${tracked}, Active 24h: ${trackedchannels24hr}, Total Subs: ${totalSubscribers.toLocaleString()}`);
+  console.log(`✅ Updated: Tracked ${tracked}, Active 24h: ${trackedchannels24hr}, Total Subs: ${totalSubscribers.toLocaleString()}`);
 
-    const newPreviousData = {};
-    results.forEach(item => {
-        newPreviousData[item.channel_id] = { subscribers: item.subscribers };
-    });
+  const newPreviousData = {};
+  results.forEach(item => {
+    newPreviousData[item.channel_id] = { subscribers: item.subscribers };
+  });
 
-    return { currentTime, previousData: newPreviousData };
+  return { currentTime, previousData: newPreviousData, results, statsData };
 }
+
+// Cache in memory so we can serve instantly
+let cache = { results: [], statsData: {} };
 
 async function run() {
-    let lastUpdateTime = Date.now();
-    let previousData = {};
+  let lastUpdateTime = Date.now();
+  let previousData = {};
 
-    while (true) {
-        const result = await updateJSON(lastUpdateTime, previousData);
-        lastUpdateTime = result.currentTime;
-        previousData = result.previousData;
+  setInterval(async () => {
+    const result = await updateJSON(lastUpdateTime, previousData);
+    lastUpdateTime = result.currentTime;
+    previousData = result.previousData;
 
-        // ⚡ Lower the interval but safe for API
-        await new Promise(resolve => setTimeout(resolve, 20000)); // 2s updates
-    }
+    // store in cache
+    cache.results = result.results;
+    cache.statsData = result.statsData;
+  }, 20000); // every 20s
 }
 
+// Start background updater
 run();
+
+// 👉 API endpoint
+app.get("/cool", (req, res) => {
+  res.json(cache.results);
+});
+
+app.get("/stats", (req, res) => {
+  res.json(cache.statsData);
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
